@@ -1,0 +1,274 @@
+import ctypes
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import tkinter as tk
+import urllib.request
+from pathlib import Path
+
+# Налаштування DPI awareness для Windows
+if sys.platform == "win32":
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+# Список прямих джерел MP4-файлу
+VIDEO_SOURCES = [
+    "https://ia801602.us.archive.org/11/items/Rick_Astley_Never_Gonna_Give_You_Up/Rick_Astley_Never_Gonna_Give_You_Up.mp4",
+    "https://ia601602.us.archive.org/11/items/Rick_Astley_Never_Gonna_Give_You_Up/Rick_Astley_Never_Gonna_Give_You_Up.mp4",
+]
+
+# Визначення стабільної теки для збереження відео на ПК (Папка "Відео" або Home)
+user_videos_dir = Path.home() / "Videos"
+if not user_videos_dir.exists():
+    user_videos_dir = Path.home()
+
+LOCAL_VIDEO_PATH = str(user_videos_dir / "rickroll.mp4")
+PARTIAL_VIDEO_PATH = LOCAL_VIDEO_PATH + ".download"
+
+download_event = threading.Event()
+download_success = False
+
+
+def download_video_worker():
+    """Фонове завантаження відео прямо на ПК."""
+    global download_success
+
+    # Якщо файл вже завантажений і валідний (> 1 MB)
+    if os.path.exists(LOCAL_VIDEO_PATH) and os.path.getsize(LOCAL_VIDEO_PATH) > 1024 * 1024:
+        download_success = True
+        download_event.set()
+        return
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+
+    for url in VIDEO_SOURCES:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=40) as response, open(PARTIAL_VIDEO_PATH, "wb") as out_file:
+                shutil.copyfileobj(response, out_file)
+
+            if os.path.exists(LOCAL_VIDEO_PATH):
+                os.remove(LOCAL_VIDEO_PATH)
+            os.rename(PARTIAL_VIDEO_PATH, LOCAL_VIDEO_PATH)
+
+            download_success = True
+            break
+        except Exception:
+            if os.path.exists(PARTIAL_VIDEO_PATH):
+                try:
+                    os.remove(PARTIAL_VIDEO_PATH)
+                except OSError:
+                    pass
+
+    download_event.set()
+
+
+# Запуск фонового завантаження
+download_thread = threading.Thread(target=download_video_worker, daemon=True)
+download_thread.start()
+
+
+def play_local_video(video_path: str):
+    """Відтворення завантаженого локального відео на повний екран."""
+    if not os.path.exists(video_path):
+        return
+
+    # Спроба запуску через браузери у повноекранному режимі кіоску з увімкненим звуком
+    browsers = [
+        os.path.expanduser(r"~\AppData\Local\Google\Chrome\Application\chrome.exe"),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        shutil.which("chrome") or "",
+        shutil.which("msedge") or "",
+    ]
+
+    selected_browser = next((b for b in browsers if b and os.path.isfile(b)), None)
+
+    if selected_browser:
+        file_url = Path(video_path).resolve().as_uri()
+        args = [
+            selected_browser,
+            "--kiosk",
+            "--autoplay-policy=no-user-gesture-required",
+            "--no-first-run",
+            "--disable-sync",
+            file_url,
+        ]
+        try:
+            subprocess.Popen(args)
+            return
+        except Exception:
+            pass
+
+    # Спроба запуску через Windows Media Player
+    wmplayer = r"C:\Program Files\Windows Media Player\wmplayer.exe"
+    if os.path.isfile(wmplayer):
+        try:
+            subprocess.Popen([wmplayer, "/fullscreen", video_path])
+            return
+        except Exception:
+            pass
+
+    # Стандартний системний відеоплеєр за замовчуванням
+    if sys.platform == "win32":
+        os.startfile(video_path)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", video_path])
+    else:
+        subprocess.Popen(["xdg-open", video_path])
+
+
+def finalize_and_play():
+    """Перевіряє наявність файлу та запускає його."""
+    if download_success and os.path.exists(LOCAL_VIDEO_PATH):
+        play_local_video(LOCAL_VIDEO_PATH)
+
+
+# --- Інтерфейс Tkinter ---
+root = tk.Tk()
+root.title("Anonymous")
+root.attributes("-fullscreen", True)
+root.attributes("-topmost", True)
+root.configure(bg="black")
+root.resizable(False, False)
+
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+
+DOT_FONT = {
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
+    "6": ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "G": ("01111", "10000", "10000", "10111", "10001", "10001", "01110"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("01110", "00100", "00100", "00100", "00100", "00100", "01110"),
+    "J": ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10001", "10001", "10001", "10001"),
+    "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "Q": ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "11011", "10001"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+}
+
+
+def render_dot_text(text: str) -> str:
+    rendered = []
+    for text_line in text.upper().splitlines():
+        rows = [""] * 7
+        for character in text_line:
+            glyph = DOT_FONT.get(character, DOT_FONT[" "])
+            rows = [
+                row + "".join("." if pixel == "1" else " " for pixel in glyph[index]) + " "
+                for index, row in enumerate(rows)
+            ]
+        rendered.extend(row.rstrip() for row in rows)
+        rendered.append("")
+    return "\n".join(rendered).rstrip()
+
+
+header_font_size = max(18, min(38, screen_width // 40))
+header_label = tk.Label(
+    root,
+    text="COD X TEAM",
+    font=("Courier New", header_font_size, "bold"),
+    fg="#ff3333",
+    bg="black",
+    justify="center",
+)
+header_label.place(relx=0.5, rely=0.22, anchor="center")
+
+warning_font_size = max(11, min(16, screen_width // 110))
+warning_label = tk.Label(
+    root,
+    text=render_dot_text("PC WILL BE DESTROYED IN"),
+    font=("Courier New", warning_font_size, "bold"),
+    fg="#ff4d4d",
+    bg="black",
+    justify="center",
+)
+warning_label.place(relx=0.5, rely=0.45, anchor="center")
+
+countdown_font_size = max(60, min(120, screen_height // 10))
+countdown_label = tk.Label(
+    root,
+    text="",
+    font=("Segoe UI", countdown_font_size, "bold"),
+    fg="#ff1a1a",
+    bg="black",
+    justify="center",
+)
+countdown_label.place(relx=0.5, rely=0.67, anchor="center")
+
+timer_job = None
+
+
+def wait_for_download_and_trigger():
+    """Чекає завершення завантаження файлу на диск без переходу на сторонні ресурси."""
+    if download_event.is_set():
+        root.destroy()
+        finalize_and_play()
+    else:
+        countdown_label.config(text="LOADING...", font=("Segoe UI", 32, "bold"))
+        root.after(300, wait_for_download_and_trigger)
+
+
+def start_countdown(seconds: int = 15):
+    global timer_job
+    countdown_label.config(text=str(seconds))
+    if seconds > 0:
+        timer_job = root.after(1000, start_countdown, seconds - 1)
+    else:
+        # Таймер закінчився: перевіряємо чи файл готовий
+        wait_for_download_and_trigger()
+
+
+def on_escape(event=None):
+    global timer_job
+    if timer_job:
+        root.after_cancel(timer_job)
+    root.destroy()
+
+
+root.after(0, start_countdown)
+root.bind("<Escape>", on_escape)
+root.mainloop()
